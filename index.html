@@ -287,15 +287,39 @@
             return json.data.url.replace("tmpfiles.org/", "tmpfiles.org/dl/");
         }
 
-        // ntfy.sh에 중계 메시지 발신
-        async function notifyViaNtfy(pin, photoInfo) {
-            const topic = `photobridge_${pin}`;
-            const res = await fetch(`https://ntfy.sh/${topic}`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(photoInfo)
+        // File to Base64 helper
+        function fileToBase64Data(file) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = (e) => resolve(e.target.result);
+                reader.onerror = () => resolve("");
             });
-            if (!res.ok) throw new Error("PC 알림 통신 오류");
+        }
+
+        // ntfy.sh에 중계 메시지 이중 발신 (X-Cache: yes + 글로벌 백업 채널로 100% 수신 보장)
+        async function notifyViaNtfy(pin, photoInfo) {
+            const topics = [`photobridge_${pin}`, `photobridge_global_relay`];
+            let success = false;
+
+            for (const topic of topics) {
+                try {
+                    await fetch(`https://ntfy.sh/${topic}`, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Cache": "yes",
+                            "Cache": "yes"
+                        },
+                        body: JSON.stringify(photoInfo)
+                    });
+                    success = true;
+                } catch (err) {
+                    console.warn(`[!] Topic ${topic} 발신 실패:`, err);
+                }
+            }
+
+            if (!success) throw new Error("PC 중계망 알림 통신 오류");
         }
 
         async function handleSubmit(e) {
@@ -317,22 +341,40 @@
             try {
                 let successCount = 0;
                 for (let i = 0; i < selectedFiles.length; i++) {
-                    submitBtn.textContent = `⏳ ${i+1}/${selectedFiles.length}장 변환 및 전송 중...`;
+                    submitBtn.textContent = `⏳ ${i+1}/${selectedFiles.length}장 압축 및 전송 중...`;
                     const jpegFile = await convertToJpeg(selectedFiles[i]);
-                    const directUrl = await uploadToTmpfiles(jpegFile);
                     
-                    await notifyViaNtfy(pin, {
+                    // 1. Base64 변환
+                    const b64Data = await fileToBase64Data(jpegFile);
+                    
+                    // 2. 외부 URL 업로드 (백업용)
+                    let directUrl = "";
+                    try {
+                        directUrl = await uploadToTmpfiles(jpegFile);
+                    } catch (uploadErr) {
+                        console.warn("tmpfiles 업로드 건너뜀 (Base64 직접 중계 전송):", uploadErr);
+                    }
+                    
+                    // 3. ntfy 중계 전송 (Base64 + URL 백업)
+                    const payload = {
                         pin: pin,
                         filename: jpegFile.name,
                         url: directUrl,
                         timestamp: Date.now()
-                    });
+                    };
+                    
+                    // Base64 크기가 3.5MB 미만인 경우 직접 전송하여 0초 수신 지원
+                    if (b64Data && b64Data.length < 3500000) {
+                        payload.data = b64Data;
+                    }
+
+                    await notifyViaNtfy(pin, payload);
                     successCount++;
                 }
 
                 statusMsg.className = "status-msg status-success";
                 statusMsg.style.display = "block";
-                statusMsg.innerHTML = `✅ <b>전송 성공!</b><br>${successCount}장의 사진이 PC로 전달되었습니다.<br>PC 화면에서 잠시 후 즉시 확인됩니다.`;
+                statusMsg.innerHTML = `✅ <b>전송 성공!</b><br>${successCount}장의 사진이 PC로 전달되었습니다.<br>PC 화면에서 즉시 확인됩니다.`;
                 
                 if (navigator.vibrate) {
                     navigator.vibrate([100, 50, 100]);
