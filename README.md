@@ -1,4 +1,4 @@
-[README_GITHUB.md](https://github.com/user-attachments/files/30569271/README_GITHUB.md)
+[README_GITHUB.md](https://github.com/user-attachments/files/30574875/README_GITHUB.md)
 # 🐱 GitHub Pages 웹 중계 설정 및 404 에러 해결 가이드
 
 업무망 사내 방화벽에서 `*.trycloudflare.com` 주소가 차단된 경우, **GitHub Pages**를 무료 웹 중계 서버로 활용하여 차단 없이 사진을 수신할 수 있습니다.
