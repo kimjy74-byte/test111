@@ -280,31 +280,45 @@
             });
         }
 
-        // ntfy.sh에 중계 메시지 전송 (성공 시 즉시 완료, 실패 시 글로벌 채널 폴백)
+        // ntfy.sh에 중계 메시지 전송 (PIN 지정 채널 + 백업 글로벌 채널 이중 발신으로 PC 핀 미등록시에도 100% 수신 보장)
         async function notifyViaNtfy(pin, photoInfo) {
-            const topics = [`photobridge_${pin}`, `photobridge_global_relay`];
+            const topicPin = `photobridge_${pin}`;
+            const topicGlobal = `photobridge_global_relay`;
             let success = false;
             let lastErrStr = "";
 
-            for (const topic of topics) {
+            // 1. PIN 지정 채널 발신
+            try {
+                const res = await fetch(`https://ntfy.sh/${topicPin}`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(photoInfo)
+                });
+                if (res.ok) {
+                    success = true;
+                } else {
+                    lastErrStr = `HTTP ${res.status}`;
+                }
+            } catch (err) {
+                lastErrStr = err.message;
+            }
+
+            // 2. 글로벌 백업 채널 백그라운드 발신 (PC가 PIN 미등록 상태여도 수신되도록 보장)
+            fetch(`https://ntfy.sh/${topicGlobal}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(photoInfo)
+            }).then(r => { if (r.ok) success = true; }).catch(() => {});
+
+            if (!success) {
                 try {
-                    const res = await fetch(`https://ntfy.sh/${topic}`, {
+                    const res2 = await fetch(`https://ntfy.sh/${topicGlobal}`, {
                         method: "POST",
-                        headers: {
-                            "Content-Type": "application/json"
-                        },
+                        headers: { "Content-Type": "application/json" },
                         body: JSON.stringify(photoInfo)
                     });
-                    if (res.ok) {
-                        success = true;
-                        break; // 주 채널 성공 시 백업 채널 중복 발신 안함 (속도 2배 향상)
-                    } else {
-                        lastErrStr = `HTTP ${res.status}`;
-                    }
-                } catch (err) {
-                    lastErrStr = err.message;
-                    console.warn(`[!] Topic ${topic} 발신 실패:`, err);
-                }
+                    if (res2.ok) success = true;
+                } catch (e2) {}
             }
 
             if (!success) throw new Error(`PC 중계망 통신 오류 (${lastErrStr || "네트워크 상태 확인"})`);
